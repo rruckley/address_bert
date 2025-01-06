@@ -1,65 +1,43 @@
+use kalosm_language_model::Embedder;
+use rbert::*;
+use tokio::main;
 
-use candle_core::{DType,Device, Tensor};
-use candle_nn::VarBuilder;
-use candle_transformers::models::distilbert::{Config,DistilBertModel};
-use log::info;
-use tokenizers::{Tokenizer,TokenizerImpl};
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use anyhow::{Error, Result};
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bert = Bert::new().await?;
+    let sentences = [
+        "Cats are cool",
+        "The geopolitical situation is dire",
+        "Pets are great",
+        "Napoleon was a tyrant",
+        "Napoleon was a great general",
+        "123 Smith Street, Liverpool NSW",
+        "Unit 3 , 123 Smith St, Liverpool, NSW"
+    ];
+    let embeddings = bert.embed_batch(sentences).await?;
+    println!("embeddings {:?}", embeddings);
 
-fn build_model() -> Result<(DistilBertModel, Tokenizer)> {
+    let first_embed = embeddings.first().unwrap();
 
-    const MODEL : &str = "";
+    let tensor = first_embed.vector();
 
-    let device = Device::Cpu;
+    println!("{:?}",tensor);
 
-    let model_id = MODEL.to_string();
 
-    let revision = "main".to_string();
-
-    let repo = Repo::with_revision(model_id, RepoType::Model, revision);
-
-    let api = Api::new()?;
-
-    let api = api.repo(repo);
-
-    let config_file = api.get("config.json")?;
-
-    let tokenizer_file = api.get("tokenizer.json")?;
-
-    let config = std::fs::read_to_string(config_file)?;
-
-    let mut config: Config = serde_json::from_str(&config)?;
-
-    let tokenizer = Tokenizer::from_file(tokenizer_file).map_err(Error::msg)?;
-
-    let vb = match api.get("model.safetensors") {
-        Ok(path) => {
-            unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &device) }
-        },
-        Err(_) => {
-
+    // Find the cosine similarity between the first two sentences
+    let mut similarities = vec![];
+    let n_sentences = sentences.len();
+    for (i, e_i) in embeddings.iter().enumerate() {
+        for j in (i + 1)..n_sentences {
+            let e_j = embeddings.get(j).unwrap();
+            let cosine_similarity = e_j.cosine_similarity(e_i);
+            similarities.push((cosine_similarity, i, j))
         }
-    }?;
-
-    let model = DistilBertModel::load(vb, &config)?;
-
-    Ok((model,tokenizer)) 
-}
-
-fn embed() -> Result<()> {
-    Ok(())
-}
-
-fn main() -> Result<()> {
-    env_logger::init();
-
-    let pkg = env!("CARGO_PKG_NAME");
-    let ver = env!("CARGO_PKG_VERSION");
-
-    info!("Starting {pkg} v{ver}");
-
-     
+    }
+    similarities.sort_by(|u, v| v.0.total_cmp(&u.0));
+    for &(score, i, j) in similarities.iter() {
+        println!("score: {score:.2} '{}' '{}'", sentences[i], sentences[j])
+    }
 
     Ok(())
 }
